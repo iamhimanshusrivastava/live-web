@@ -57,12 +57,12 @@ interface AuthContextType {
     signOut: () => Promise<void>;
 
     /**
-     * Verify user's email with OTP code
-     * @param email - User's email address
-     * @param token - OTP token sent to email
-     * @returns Promise that resolves when verification is complete
+     * Verify user against external system
+     * Calls an Edge Function to validate the externalId with the external system
+     * @param externalId - The external system identifier to verify
+     * @returns Promise<boolean> - true if verification succeeds, false otherwise
      */
-    verifyEmail: (email: string, token: string) => Promise<void>;
+    verifyEmail: (externalId: string) => Promise<boolean>;
 }
 
 /**
@@ -130,29 +130,72 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         initializeAuth();
 
-        // Cleanup function (empty for now)
-        return () => { };
+        // Subscribe to auth state changes
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(
+            async (_event: string, currentSession: Session | null) => {
+                setSession(currentSession);
+                setUser(currentSession?.user ?? null);
+
+                if (currentSession?.user) {
+                    await fetchProfile(currentSession.user.id);
+                } else {
+                    setProfile(null);
+                }
+            }
+        );
+
+        // Cleanup: unsubscribe from auth state changes
+        return () => {
+            subscription.unsubscribe();
+        };
     }, []);
 
-    // Stub authentication methods (to be implemented)
+    // Authentication methods
     const signIn = async (email: string, password: string): Promise<void> => {
-        // TODO: Implement sign in logic
-        console.log('signIn called with:', email);
+        const { error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+        });
+
+        if (error) throw error;
     };
 
     const signUp = async (email: string, password: string, fullName: string): Promise<void> => {
-        // TODO: Implement sign up logic
-        console.log('signUp called with:', email, fullName);
+        const { error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+                data: {
+                    full_name: fullName,
+                },
+            },
+        });
+
+        if (error) throw error;
     };
 
     const signOut = async (): Promise<void> => {
-        // TODO: Implement sign out logic
-        console.log('signOut called');
+        const { error } = await supabase.auth.signOut();
+
+        if (error) throw error;
     };
 
-    const verifyEmail = async (email: string, token: string): Promise<void> => {
-        // TODO: Implement email verification logic
-        console.log('verifyEmail called with:', email, token);
+    /**
+     * Verify user against external system
+     * This will call an Edge Function that validates the externalId
+     * against the external authentication system (e.g., LMS, SSO provider)
+     * The Edge Function will update the user's profile with is_verified=true
+     * if verification succeeds
+     */
+    const verifyEmail = async (externalId: string): Promise<boolean> => {
+        // TODO: Call Edge Function when ready
+        // Example: const { data, error } = await supabase.functions.invoke('verify-external-id', {
+        //   body: { externalId }
+        // });
+        // if (error) throw error;
+        // return data?.verified ?? false;
+
+        return false;
     };
 
     // Context value
