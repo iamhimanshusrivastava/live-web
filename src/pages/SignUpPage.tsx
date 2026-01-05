@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,8 +30,13 @@ export default function SignUpPage() {
         try {
             await signUp(email, password, fullName);
             setSuccess(true);
+            toast.success('Account created!', {
+                description: 'Check your email to verify your account',
+            });
         } catch (error) {
-            console.error('Sign up error:', error);
+            toast.error('Sign up failed', {
+                description: error instanceof Error ? error.message : 'Unknown error',
+            });
         } finally {
             setLoading(false);
         }

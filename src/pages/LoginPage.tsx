@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
+import { logEvent } from '@/lib/analytics';
 
 /**
  * Login page component
@@ -27,9 +29,18 @@ export default function LoginPage() {
 
         try {
             await signIn(email, password);
+
+            // Log successful login
+            logEvent('user_login', {
+                email,
+                timestamp: new Date().toISOString(),
+            });
+
             navigate('/sessions');
         } catch (error) {
-            console.error('Login error:', error);
+            toast.error('Login failed', {
+                description: error instanceof Error ? error.message : 'Unknown error',
+            });
         } finally {
             setLoading(false);
         }

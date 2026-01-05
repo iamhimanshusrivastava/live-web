@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { Session, Message } from '@/lib/database.types';
 import { supabase } from '@/lib/supabase';
+import { logEvent } from '@/lib/analytics';
 
 /**
  * Custom hook for managing session state and operations
@@ -13,6 +14,10 @@ export function useSession(sessionId: string) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [viewerCount, setViewerCount] = useState<number>(0);
     const [loading, setLoading] = useState<boolean>(true);
+    const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected'>('connected');
+
+    // Rate limiting for messages
+    const lastMessageTime = useRef<number>(0);
 
     // Load session data from database
     const loadSession = async () => {
@@ -35,13 +40,20 @@ export function useSession(sessionId: string) {
     };
 
     // Load messages for this session
-    const loadMessages = async () => {
-        const { data, error } = await supabase
+    const loadMessages = async (before?: number) => {
+        let query = supabase
             .from('messages')
             .select('*')
             .eq('session_id', sessionId)
             .order('created_at', { ascending: true })
             .limit(100);
+
+        // If before is provided, load messages before that ID
+        if (before) {
+            query = query.lt('id', before);
+        }
+
+        const { data, error } = await query;
 
         if (error) {
             console.error('Error loading messages:', error);
@@ -49,7 +61,13 @@ export function useSession(sessionId: string) {
         }
 
         if (data) {
-            setMessages(data as Message[]);
+            if (before) {
+                // Prepend older messages
+                setMessages((prev) => [...(data as Message[]), ...prev]);
+            } else {
+                // Replace messages (initial load)
+                setMessages(data as Message[]);
+            }
         }
     };
 
@@ -145,7 +163,26 @@ export function useSession(sessionId: string) {
                     setSession(payload.new as Session);
                 }
             )
-            .subscribe();
+            .on(
+                'system',
+                { event: 'presence' },
+                (payload) => {
+                    // Track connection status
+                    if (payload.event === 'join') {
+                        setConnectionStatus('connected');
+                    } else if (payload.event === 'leave') {
+                        setConnectionStatus('disconnected');
+                    }
+                }
+            )
+            .subscribe((status) => {
+                // Also track subscription status
+                if (status === 'SUBSCRIBED') {
+                    setConnectionStatus('connected');
+                } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                    setConnectionStatus('disconnected');
+                }
+            });
     };
 
     // Initialize hook - load session and messages on mount
@@ -168,6 +205,21 @@ export function useSession(sessionId: string) {
         content: string,
         messageType: 'user' | 'admin' = 'user'
     ) => {
+        // Rate limiting: Check if 6 seconds have passed since last message
+        const now = Date.now();
+        const timeSinceLastMessage = now - lastMessageTime.current;
+
+        if (timeSinceLastMessage < 6000) {
+            throw new Error('Please wait before sending another message');
+        }
+
+        // Limit message length to 500 characters
+        const sanitizedContent = content.trim().slice(0, 500);
+
+        if (!sanitizedContent) {
+            throw new Error('Message cannot be empty');
+        }
+
         // Get current user
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
@@ -187,11 +239,22 @@ export function useSession(sessionId: string) {
             session_id: sessionId,
             user_id: user.id,
             user_name: profile?.full_name || user.email || 'Anonymous',
-            content,
+            content: sanitizedContent,
             message_type: messageType,
         });
 
         if (error) throw error;
+
+        // Update last message time after successful send
+        lastMessageTime.current = now;
+
+        // Log message sent event
+        logEvent('message_sent', {
+            sessionId,
+            messageType,
+            messageLength: sanitizedContent.length,
+            timestamp: new Date().toISOString(),
+        });
     };
 
     const pinMessage = async (messageId: number, isPinned: boolean) => {
@@ -261,17 +324,27 @@ export function useSession(sessionId: string) {
         if (error) throw error;
     };
 
+    // Load more messages (for pagination)
+    const loadMoreMessages = async () => {
+        if (messages.length > 0) {
+            // Load messages before the first message ID
+            await loadMessages(messages[0].id);
+        }
+    };
+
     // Return hook values
     return {
         session,
         messages,
         viewerCount,
         loading,
+        connectionStatus,
         sendMessage,
         pinMessage,
         deleteMessage,
         toggleChat,
         joinSession,
         leaveSession,
+        loadMoreMessages,
     };
 }

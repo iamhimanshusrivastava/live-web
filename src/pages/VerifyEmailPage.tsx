@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,7 +17,6 @@ export default function VerifyEmailPage() {
     // Form state
     const [externalId, setExternalId] = useState('');
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
     const [success, setSuccess] = useState(false);
 
     /**
@@ -25,23 +25,28 @@ export default function VerifyEmailPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
-        setError('');
 
         try {
             const verified = await verifyEmail(externalId);
 
             if (verified) {
                 setSuccess(true);
+                toast.success('Verification successful!', {
+                    description: 'Redirecting to sessions...',
+                });
                 // Navigate to sessions after a brief delay
                 setTimeout(() => {
                     navigate('/sessions');
                 }, 2000);
             } else {
-                setError('Verification failed. Please check your External System ID and try again.');
+                toast.error('Verification failed', {
+                    description: 'Please check your External System ID and try again.',
+                });
             }
         } catch (err) {
-            console.error('Verification error:', err);
-            setError(err instanceof Error ? err.message : 'Verification failed. Please try again.');
+            toast.error('Verification failed', {
+                description: err instanceof Error ? err.message : 'An unexpected error occurred',
+            });
         } finally {
             setLoading(false);
         }
@@ -103,14 +108,6 @@ export default function VerifyEmailPage() {
                                 Enter your external system ID to verify your account
                             </p>
                         </div>
-
-                        {error && (
-                            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
-                                <p className="text-sm text-destructive">
-                                    {error}
-                                </p>
-                            </div>
-                        )}
 
                         <Button
                             type="submit"

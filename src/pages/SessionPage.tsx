@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import Hls from 'hls.js';
+import { toast } from 'sonner';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar } from '@/components/ui/avatar';
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useSession } from '@/hooks/useSession';
 import { useAuth } from '@/contexts/AuthContext';
+import { logEvent } from '@/lib/analytics';
 
 /**
  * Session page component
@@ -20,11 +22,14 @@ export default function SessionPage() {
     // Video player ref
     const videoRef = useRef<HTMLVideoElement>(null);
 
+    // Scroll area ref for auto-scroll
+    const scrollRef = useRef<HTMLDivElement>(null);
+
     // Auth context
     const { profile } = useAuth();
 
     // Use session hook
-    const { session, loading, messages, viewerCount, sendMessage, joinSession, leaveSession } = useSession(sessionId || '');
+    const { session, loading, messages, viewerCount, connectionStatus, sendMessage, joinSession, leaveSession, loadMoreMessages } = useSession(sessionId || '');
 
     // Message input state
     const [messageInput, setMessageInput] = useState('');
@@ -35,6 +40,12 @@ export default function SessionPage() {
     useEffect(() => {
         if (sessionId) {
             joinSession();
+
+            // Log session join
+            logEvent('session_joined', {
+                sessionId,
+                timestamp: new Date().toISOString(),
+            });
         }
 
         return () => {
@@ -71,6 +82,34 @@ export default function SessionPage() {
             video.src = videoUrl;
         }
     }, [session?.video_url]);
+
+    /**
+     * Auto-scroll to bottom when new messages arrive
+     */
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollTo({
+                top: scrollRef.current.scrollHeight,
+                behavior: 'smooth',
+            });
+        }
+    }, [messages]);
+
+    /**
+     * Show toast when connection is lost
+     */
+    useEffect(() => {
+        if (connectionStatus === 'disconnected') {
+            toast.error('Connection lost', {
+                description: 'Attempting to reconnect...',
+                duration: Infinity, // Keep showing until reconnected
+                id: 'connection-lost', // Prevent duplicate toasts
+            });
+        } else if (connectionStatus === 'connected') {
+            // Dismiss the connection lost toast when reconnected
+            toast.dismiss('connection-lost');
+        }
+    }, [connectionStatus]);
 
     // Loading state
     if (loading) {
@@ -116,8 +155,21 @@ export default function SessionPage() {
                         </div>
                     </CardHeader>
                     <CardContent className="flex-1 p-0">
-                        <ScrollArea className="h-full p-4">
+                        <ScrollArea ref={scrollRef} className="h-full p-4">
                             <div className="space-y-4">
+                                {/* Load More button */}
+                                {messages.length >= 100 && (
+                                    <div className="flex justify-center">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => loadMoreMessages()}
+                                        >
+                                            Load More
+                                        </Button>
+                                    </div>
+                                )}
+
                                 {messages.map((message) => (
                                     <div key={message.id} className="flex gap-3">
                                         <Avatar className="h-8 w-8 flex-shrink-0">
@@ -166,7 +218,9 @@ export default function SessionPage() {
                                         setMessageInput('');
                                     })
                                     .catch((error) => {
-                                        console.error('Failed to send message:', error);
+                                        toast.error('Failed to send message', {
+                                            description: error instanceof Error ? error.message : 'Unknown error',
+                                        });
                                     });
                             }}
                             className="flex gap-2"
