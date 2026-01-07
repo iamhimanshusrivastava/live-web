@@ -1,87 +1,74 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import Hls from 'hls.js';
-import { toast } from 'sonner';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Avatar } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { useSession } from '@/hooks/useSession';
-import { useAuth } from '@/contexts/AuthContext';
-import { logEvent } from '@/lib/analytics';
+import { useBatchSession } from '@/hooks/useBatchSession';
+import { useSessionState, shouldShowCountdown, shouldShowStarting, shouldShowEnded } from '@/hooks/useSessionState';
+import { initServerTime } from '@/lib/serverTime';
+import DualVideoPlayer from '@/components/DualVideoPlayer';
+import CountdownScreen from '@/components/CountdownScreen';
+import StartingScreen from '@/components/StartingScreen';
+import SessionEndedScreen from '@/components/SessionEndedScreen';
+import EmailVerificationModal from '@/components/EmailVerificationModal';
+
+// Temporary in-memory chat (will be replaced with Supabase realtime)
+interface ChatMessage {
+    id: string;
+    userName: string;
+    content: string;
+    timestamp: Date;
+    isAdmin?: boolean;
+}
 
 /**
- * Session page component
- * Main view for watching live sessions with video player and chat
+ * SessionPage - SIMULIVE with Codekaro Integration
+ * 
+ * Uses Codekaro batch ID directly (not Supabase UUID)
+ * Shows email modal for authentication
  */
 export default function SessionPage() {
     const { sessionId } = useParams<{ sessionId: string }>();
 
-    // Video player ref
-    const videoRef = useRef<HTMLVideoElement>(null);
+    // Codekaro batch session
+    const {
+        session,
+        user,
+        loading,
+        error,
+        isAuthenticated,
+        showEmailModal,
+        verifyEmail,
+    } = useBatchSession(sessionId || '');
 
-    // Scroll area ref for auto-scroll
+    // Session state machine
+    const {
+        state: sessionState,
+        secondsToStart,
+        liveOffset,
+        countdownDisplay,
+        durationDisplay,
+        isTimeSynced,
+    } = useSessionState({
+        scheduledStart: session?.scheduledStart?.toISOString() || null,
+        videoDuration: null,
+        isActive: !!session?.isValid,
+    });
+
+    // Chat state (in-memory for now)
+    const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [messageInput, setMessageInput] = useState('');
     const scrollRef = useRef<HTMLDivElement>(null);
 
-    // Auth context
-    const { profile } = useAuth();
-
-    // Use session hook
-    const { session, loading, messages, viewerCount, connectionStatus, sendMessage, joinSession, leaveSession, loadMoreMessages } = useSession(sessionId || '');
-
-    // Message input state
-    const [messageInput, setMessageInput] = useState('');
-
     /**
-     * Join session on mount, leave on unmount
+     * Initialize server time on mount
      */
     useEffect(() => {
-        if (sessionId) {
-            joinSession();
-
-            // Log session join
-            logEvent('session_joined', {
-                sessionId,
-                timestamp: new Date().toISOString(),
-            });
-        }
-
-        return () => {
-            if (sessionId) {
-                leaveSession();
-            }
-        };
-    }, [sessionId]);
-
-    /**
-     * Setup HLS video player
-     */
-    useEffect(() => {
-        if (!session?.video_url || !videoRef.current) {
-            return;
-        }
-
-        const video = videoRef.current;
-        const videoUrl = session.video_url;
-
-        // Check if HLS is supported
-        if (Hls.isSupported()) {
-            const hls = new Hls();
-            hls.loadSource(videoUrl);
-            hls.attachMedia(video);
-
-            // Cleanup HLS instance
-            return () => {
-                hls.destroy();
-            };
-        }
-        // Fallback for Safari (native HLS support)
-        else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            video.src = videoUrl;
-        }
-    }, [session?.video_url]);
+        initServerTime().catch(console.error);
+    }, []);
 
     /**
      * Auto-scroll to bottom when new messages arrive
@@ -96,152 +83,217 @@ export default function SessionPage() {
     }, [messages]);
 
     /**
-     * Show toast when connection is lost
+     * Send a chat message
      */
-    useEffect(() => {
-        if (connectionStatus === 'disconnected') {
-            toast.error('Connection lost', {
-                description: 'Attempting to reconnect...',
-                duration: Infinity, // Keep showing until reconnected
-                id: 'connection-lost', // Prevent duplicate toasts
-            });
-        } else if (connectionStatus === 'connected') {
-            // Dismiss the connection lost toast when reconnected
-            toast.dismiss('connection-lost');
-        }
-    }, [connectionStatus]);
+    const sendMessage = () => {
+        if (!messageInput.trim() || !user) return;
+
+        const newMessage: ChatMessage = {
+            id: Date.now().toString(),
+            userName: user.name,
+            content: messageInput.trim(),
+            timestamp: new Date(),
+        };
+
+        setMessages(prev => [...prev, newMessage]);
+        setMessageInput('');
+    };
 
     // Loading state
     if (loading) {
         return (
-            <div className="flex min-h-screen items-center justify-center bg-background">
-                <p className="text-muted-foreground">Loading session...</p>
+            <div className="flex min-h-screen items-center justify-center bg-black">
+                <div className="text-center space-y-4">
+                    <div className="animate-spin w-8 h-8 border-2 border-white/30 border-t-white rounded-full mx-auto" />
+                    <p className="text-zinc-400">Loading session...</p>
+                </div>
             </div>
         );
     }
 
-    // Session not found
-    if (!session) {
+    // Session not found or error
+    if (error || !session) {
         return (
-            <div className="flex min-h-screen items-center justify-center bg-background">
-                <p className="text-muted-foreground">Session not found</p>
+            <div className="flex min-h-screen items-center justify-center bg-black">
+                <div className="text-center space-y-4">
+                    <h1 className="text-2xl font-bold text-white">Session Not Found</h1>
+                    <p className="text-zinc-400">{error || 'The requested session does not exist.'}</p>
+                    <p className="text-sm text-zinc-500">Session ID: {sessionId}</p>
+                </div>
             </div>
         );
     }
 
-    return (
-        <div className="flex h-screen bg-background">
-            {/* Left side: Video player area */}
-            <div className="flex-1 flex items-center justify-center bg-black">
-                <video
-                    ref={videoRef}
-                    controls
-                    autoPlay
-                    className="w-full h-full"
+    // Show countdown screen (before stream starts)
+    if (shouldShowCountdown(sessionState)) {
+        return (
+            <>
+                <EmailVerificationModal
+                    isOpen={showEmailModal}
+                    sessionTitle={session.title}
+                    error={error}
+                    onSubmit={verifyEmail}
                 />
-            </div>
+                <CountdownScreen
+                    title={session.title}
+                    topic={session.topic}
+                    secondsToStart={secondsToStart}
+                    countdownDisplay={countdownDisplay}
+                    isImminent={sessionState === 'countdown'}
+                />
+            </>
+        );
+    }
 
-            {/* Right side: Chat sidebar */}
-            <div className="w-96 border-l">
-                <Card className="h-full rounded-none border-0">
-                    <CardHeader className="border-b">
-                        <div className="flex items-center justify-between">
-                            <CardTitle className="text-lg">
-                                {session.title}
-                            </CardTitle>
-                            <Badge variant="secondary">
-                                {viewerCount} {viewerCount === 1 ? 'viewer' : 'viewers'}
+    // Show starting screen (0-3 seconds transition)
+    if (shouldShowStarting(sessionState)) {
+        return (
+            <>
+                <EmailVerificationModal
+                    isOpen={showEmailModal}
+                    sessionTitle={session.title}
+                    error={error}
+                    onSubmit={verifyEmail}
+                />
+                <StartingScreen title={session.title} />
+            </>
+        );
+    }
+
+    // Show ended screen
+    if (shouldShowEnded(sessionState)) {
+        return <SessionEndedScreen title={session.title} />;
+    }
+
+    // LIVE STATE - Show video player + chat
+    return (
+        <>
+            {/* Email verification modal */}
+            <EmailVerificationModal
+                isOpen={showEmailModal}
+                sessionTitle={session.title}
+                error={error}
+                onSubmit={verifyEmail}
+            />
+
+            <div className="flex h-screen bg-black">
+                {/* Left side: Video player area */}
+                <div className="flex-1 flex flex-col">
+                    {/* Stream info bar */}
+                    <div className="flex items-center justify-between px-4 py-2 bg-black/80 border-b border-zinc-800">
+                        <div className="flex items-center gap-3">
+                            <Badge variant="destructive" className="animate-pulse">
+                                🔴 LIVE
                             </Badge>
+                            <span className="text-white text-sm font-mono">
+                                {durationDisplay}
+                            </span>
+                            {!isTimeSynced && (
+                                <span className="text-yellow-500 text-xs">
+                                    Syncing...
+                                </span>
+                            )}
                         </div>
-                    </CardHeader>
-                    <CardContent className="flex-1 p-0">
-                        <ScrollArea ref={scrollRef} className="h-full p-4">
-                            <div className="space-y-4">
-                                {/* Load More button */}
-                                {messages.length >= 100 && (
-                                    <div className="flex justify-center">
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => loadMoreMessages()}
-                                        >
-                                            Load More
-                                        </Button>
-                                    </div>
-                                )}
-
-                                {messages.map((message) => (
-                                    <div key={message.id} className="flex gap-3">
-                                        <Avatar className="h-8 w-8 flex-shrink-0">
-                                            <div className="flex h-full w-full items-center justify-center bg-primary text-primary-foreground text-sm font-medium">
-                                                {message.user_name.charAt(0).toUpperCase()}
-                                            </div>
-                                        </Avatar>
-                                        <div className="flex-1 space-y-1">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="text-sm font-medium">
-                                                    {message.user_name}
-                                                </span>
-                                                {message.message_type === 'admin' && (
-                                                    <Badge variant="destructive" className="text-xs">
-                                                        Admin
-                                                    </Badge>
-                                                )}
-                                                {message.is_pinned && (
-                                                    <Badge variant="secondary" className="text-xs">
-                                                        Pinned
-                                                    </Badge>
-                                                )}
-                                            </div>
-                                            <p className="text-sm text-foreground break-words">
-                                                {message.content}
-                                            </p>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </ScrollArea>
-                    </CardContent>
-
-                    {/* Message input form */}
-                    <div className="border-t p-4">
-                        <form
-                            onSubmit={(e) => {
-                                e.preventDefault();
-
-                                if (!messageInput.trim()) {
-                                    return;
-                                }
-
-                                sendMessage(messageInput)
-                                    .then(() => {
-                                        setMessageInput('');
-                                    })
-                                    .catch((error) => {
-                                        toast.error('Failed to send message', {
-                                            description: error instanceof Error ? error.message : 'Unknown error',
-                                        });
-                                    });
-                            }}
-                            className="flex gap-2"
-                        >
-                            <Input
-                                value={messageInput}
-                                onChange={(e) => setMessageInput(e.target.value)}
-                                placeholder="Type a message..."
-                                disabled={!profile?.is_verified || !session.chat_enabled}
-                                className="flex-1"
-                            />
-                            <Button
-                                type="submit"
-                                disabled={!profile?.is_verified || !session.chat_enabled}
-                            >
-                                Send
-                            </Button>
-                        </form>
+                        <div className="flex items-center gap-2">
+                            {user && (
+                                <span className="text-zinc-400 text-sm">
+                                    {user.name}
+                                </span>
+                            )}
+                        </div>
                     </div>
-                </Card>
+
+                    {/* Dual video player */}
+                    <div className="flex-1">
+                        <DualVideoPlayer
+                            screenUrl={session.screenUrl}
+                            faceUrl={session.faceUrl}
+                            scheduledStart={session.scheduledStart.toISOString()}
+                            isLive={true}
+                            liveOffset={liveOffset}
+                        />
+                    </div>
+                </div>
+
+                {/* Right side: Chat sidebar */}
+                <div className="w-96 border-l border-zinc-800 bg-background">
+                    <Card className="h-full rounded-none border-0 flex flex-col">
+                        <CardHeader className="border-b">
+                            <div className="flex items-center justify-between">
+                                <CardTitle className="text-lg">
+                                    {session.title}
+                                </CardTitle>
+                                <Badge variant="secondary">
+                                    {session.topic}
+                                </Badge>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="flex-1 p-0">
+                            <ScrollArea ref={scrollRef} className="h-full p-4">
+                                <div className="space-y-4">
+                                    {messages.length === 0 && (
+                                        <p className="text-center text-zinc-500 text-sm py-8">
+                                            No messages yet. Be the first to say hello!
+                                        </p>
+                                    )}
+
+                                    {messages.map((message) => (
+                                        <div key={message.id} className="flex gap-3">
+                                            <Avatar className="h-8 w-8 shrink-0">
+                                                <div className="flex h-full w-full items-center justify-center bg-primary text-primary-foreground text-sm font-medium">
+                                                    {message.userName.charAt(0).toUpperCase()}
+                                                </div>
+                                            </Avatar>
+                                            <div className="flex-1 space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-sm font-medium">
+                                                        {message.userName}
+                                                    </span>
+                                                    {message.isAdmin && (
+                                                        <Badge variant="destructive" className="text-xs">
+                                                            Admin
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                                <p className="text-sm text-foreground break-words">
+                                                    {message.content}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </ScrollArea>
+                        </CardContent>
+
+                        {/* Message input form */}
+                        <div className="border-t p-4">
+                            {isAuthenticated ? (
+                                <form
+                                    onSubmit={(e) => {
+                                        e.preventDefault();
+                                        sendMessage();
+                                    }}
+                                    className="flex gap-2"
+                                >
+                                    <Input
+                                        value={messageInput}
+                                        onChange={(e) => setMessageInput(e.target.value)}
+                                        placeholder="Type a message..."
+                                        className="flex-1"
+                                    />
+                                    <Button type="submit">
+                                        Send
+                                    </Button>
+                                </form>
+                            ) : (
+                                <p className="text-center text-zinc-500 text-sm">
+                                    Enter your email to chat
+                                </p>
+                            )}
+                        </div>
+                    </Card>
+                </div>
             </div>
-        </div>
+        </>
     );
 }

@@ -3,10 +3,10 @@ import { useAuth } from '@/contexts/AuthContext';
 
 /**
  * Protected route component
- * Redirects to login if user is not authenticated
+ * Redirects to login if user is not authenticated (via Codekaro or Supabase)
  */
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-    const { user, loading } = useAuth();
+    const { isAuthenticated, loading } = useAuth();
 
     // Show loading state while checking authentication
     if (loading) {
@@ -18,10 +18,11 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     }
 
     // Redirect to login if not authenticated
-    if (!user) {
+    if (!isAuthenticated) {
         return <Navigate to="/login" replace />;
     }
 
     // Render children if authenticated
     return <>{children}</>;
 }
+

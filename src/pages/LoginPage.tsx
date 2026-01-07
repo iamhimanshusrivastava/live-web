@@ -1,45 +1,61 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { logEvent } from '@/lib/analytics';
 
 /**
  * Login page component
- * Allows users to sign in with email and password
+ * Email-only authentication via Codekaro API
  */
 export default function LoginPage() {
     const navigate = useNavigate();
-    const { signIn } = useAuth();
+    const { loginWithEmail, isAuthenticated } = useAuth();
 
     // Form state
     const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
+
+    // Redirect if already authenticated
+    if (isAuthenticated) {
+        navigate('/sessions');
+        return null;
+    }
 
     /**
      * Handle form submission
      */
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        if (!email.trim()) {
+            toast.error('Please enter your email');
+            return;
+        }
+
         setLoading(true);
 
         try {
-            await signIn(email, password);
+            await loginWithEmail(email.trim());
 
             // Log successful login
             logEvent('user_login', {
-                email,
+                email: email.trim(),
+                authMethod: 'codekaro',
                 timestamp: new Date().toISOString(),
+            });
+
+            toast.success('Welcome!', {
+                description: 'You have been logged in successfully.',
             });
 
             navigate('/sessions');
         } catch (error) {
             toast.error('Login failed', {
-                description: error instanceof Error ? error.message : 'Unknown error',
+                description: error instanceof Error ? error.message : 'User not found. Please check your email.',
             });
         } finally {
             setLoading(false);
@@ -49,63 +65,46 @@ export default function LoginPage() {
     return (
         <div className="flex min-h-screen items-center justify-center bg-background p-4">
             <Card className="w-full max-w-md">
-                <CardHeader>
-                    <CardTitle className="text-2xl font-semibold text-center">
-                        Sign In
+                <CardHeader className="text-center">
+                    <CardTitle className="text-2xl font-semibold">
+                        Welcome to Live Stream
                     </CardTitle>
+                    <CardDescription>
+                        Enter your email to join the session
+                    </CardDescription>
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div className="space-y-2">
                             <label htmlFor="email" className="text-sm font-medium">
-                                Email
+                                Email Address
                             </label>
                             <Input
                                 id="email"
                                 type="email"
-                                placeholder="Enter your email"
+                                placeholder="Enter your registered email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                                 disabled={loading}
                                 required
+                                autoFocus
                             />
-                        </div>
-
-                        <div className="space-y-2">
-                            <label htmlFor="password" className="text-sm font-medium">
-                                Password
-                            </label>
-                            <Input
-                                id="password"
-                                type="password"
-                                placeholder="Enter your password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                disabled={loading}
-                                required
-                            />
+                            <p className="text-xs text-muted-foreground">
+                                Use your Codekaro registered email address
+                            </p>
                         </div>
 
                         <Button
                             type="submit"
                             className="w-full"
-                            disabled={loading}
+                            disabled={loading || !email.trim()}
                         >
-                            {loading ? 'Signing in...' : 'Sign In'}
+                            {loading ? 'Verifying...' : 'Continue'}
                         </Button>
-
-                        <p className="text-center text-sm text-muted-foreground">
-                            Don't have an account?{' '}
-                            <Link
-                                to="/signup"
-                                className="font-medium text-primary hover:underline"
-                            >
-                                Sign up
-                            </Link>
-                        </p>
                     </form>
                 </CardContent>
             </Card>
         </div>
     );
 }
+

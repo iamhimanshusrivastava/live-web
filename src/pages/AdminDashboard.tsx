@@ -1,392 +1,204 @@
-import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Eye, MessageSquare, Users, Clock } from 'lucide-react';
+import { Eye, MessageSquare } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
-import { Button } from '@/components/ui/button';
-import { useSession } from '@/hooks/useSession';
-import { supabase } from '@/lib/supabase';
-import { logEvent } from '@/lib/analytics';
+import { useBatchSession } from '@/hooks/useBatchSession';
+import { useSessionState } from '@/hooks/useSessionState';
+import DualVideoPlayer from '@/components/DualVideoPlayer';
+import EmailVerificationModal from '@/components/EmailVerificationModal';
 
 /**
- * Admin dashboard page component
- * Provides instructors with session controls, analytics, and moderation tools
+ * Admin Dashboard
+ * Simplified for Codekaro batch integration
+ * Shows video player with basic session info
  */
 export default function AdminDashboard() {
     const { sessionId } = useParams<{ sessionId: string }>();
 
-    // Use session hook
-    const { session, loading, messages, viewerCount, sendMessage, toggleChat, pinMessage, deleteMessage } = useSession(sessionId || '');
+    // Codekaro batch session
+    const {
+        session,
+        user,
+        loading,
+        error,
+        showEmailModal,
+        verifyEmail,
+    } = useBatchSession(sessionId || '');
 
-    // State
-    const [adminMessage, setAdminMessage] = useState('');
-    const [analytics, setAnalytics] = useState<any | null>(null);
-
-    /**
-     * Load session analytics from database
-     */
-    const loadAnalytics = async () => {
-        if (!sessionId) return;
-
-        try {
-            const { data, error } = await supabase
-                .from('session_analytics')
-                .select('*')
-                .eq('session_id', sessionId)
-                .single();
-
-            if (error) {
-                console.error('Error loading analytics:', error);
-                return;
-            }
-
-            if (data) {
-                setAnalytics(data);
-            }
-        } catch (err) {
-            console.error('Failed to load analytics:', err);
-        }
-    };
-
-    /**
-     * Load analytics on mount
-     */
-    useEffect(() => {
-        loadAnalytics();
-    }, [sessionId]);
+    // Session state machine
+    const {
+        state: sessionState,
+        liveOffset,
+        durationDisplay,
+    } = useSessionState({
+        scheduledStart: session?.scheduledStart?.toISOString() || null,
+        videoDuration: null,
+        isActive: !!session?.isValid,
+    });
 
     // Loading state
     if (loading) {
         return (
-            <div className="flex min-h-screen items-center justify-center bg-background">
-                <p className="text-muted-foreground">Loading dashboard...</p>
+            <div className="flex min-h-screen items-center justify-center bg-black">
+                <div className="text-center space-y-4">
+                    <div className="animate-spin w-8 h-8 border-2 border-white/30 border-t-white rounded-full mx-auto" />
+                    <p className="text-zinc-400">Loading admin dashboard...</p>
+                </div>
             </div>
         );
     }
 
     // Session not found
-    if (!session) {
+    if (error || !session) {
         return (
-            <div className="flex min-h-screen items-center justify-center bg-background">
-                <p className="text-muted-foreground">Session not found</p>
+            <div className="flex min-h-screen items-center justify-center bg-black">
+                <div className="text-center space-y-4">
+                    <h1 className="text-2xl font-bold text-white">Session Not Found</h1>
+                    <p className="text-zinc-400">{error || 'The requested session does not exist.'}</p>
+                    <p className="text-sm text-zinc-500">Session ID: {sessionId}</p>
+                </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-background p-6">
-            <div className="max-w-7xl mx-auto space-y-6">
-                {/* Page header */}
-                <h1 className="text-3xl font-semibold">Admin Dashboard</h1>
+        <>
+            {/* Email verification modal */}
+            <EmailVerificationModal
+                isOpen={showEmailModal}
+                sessionTitle={session.title}
+                error={error}
+                onSubmit={verifyEmail}
+            />
 
-                {/* Stats cards grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {/* Live Viewers */}
-                    <Card>
-                        <CardHeader className="flex flex-row items-center justify-between pb-2">
-                            <CardTitle className="text-sm font-medium text-muted-foreground">
-                                Live Viewers
-                            </CardTitle>
-                            <Eye className="h-4 w-4 text-muted-foreground" />
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-3xl font-bold">{viewerCount}</p>
-                        </CardContent>
-                    </Card>
+            <div className="flex h-screen bg-black">
+                {/* Left: Video Player */}
+                <div className="flex-1 flex flex-col">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-4 py-3 bg-black/80 border-b border-zinc-800">
+                        <div className="flex items-center gap-3">
+                            <Badge variant="outline" className="text-yellow-500 border-yellow-500">
+                                ADMIN
+                            </Badge>
+                            <h1 className="text-white text-lg font-semibold">
+                                {session.title}
+                            </h1>
+                        </div>
+                        {user && (
+                            <span className="text-zinc-400 text-sm">
+                                {user.name}
+                            </span>
+                        )}
+                    </div>
 
-                    {/* Total Messages */}
-                    <Card>
-                        <CardHeader className="flex flex-row items-center justify-between pb-2">
-                            <CardTitle className="text-sm font-medium text-muted-foreground">
-                                Total Messages
-                            </CardTitle>
-                            <MessageSquare className="h-4 w-4 text-muted-foreground" />
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-3xl font-bold">{messages.length}</p>
-                        </CardContent>
-                    </Card>
-
-                    {/* Peak Viewers */}
-                    <Card>
-                        <CardHeader className="flex flex-row items-center justify-between pb-2">
-                            <CardTitle className="text-sm font-medium text-muted-foreground">
-                                Peak Viewers
-                            </CardTitle>
-                            <Users className="h-4 w-4 text-muted-foreground" />
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-3xl font-bold">
-                                {analytics?.peak_viewers ?? '-'}
-                            </p>
-                        </CardContent>
-                    </Card>
-
-                    {/* Avg Watch Time */}
-                    <Card>
-                        <CardHeader className="flex flex-row items-center justify-between pb-2">
-                            <CardTitle className="text-sm font-medium text-muted-foreground">
-                                Avg Watch Time
-                            </CardTitle>
-                            <Clock className="h-4 w-4 text-muted-foreground" />
-                        </CardHeader>
-                        <CardContent>
-                            <p className="text-3xl font-bold">
-                                {analytics?.avg_watch_duration_seconds
-                                    ? `${Math.round(analytics.avg_watch_duration_seconds / 60)}m`
-                                    : '-'}
-                            </p>
-                        </CardContent>
-                    </Card>
-                </div>
-
-                {/* Session controls section */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Session Controls</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        {/* Chat enabled toggle */}
-                        <div className="flex items-center justify-between">
-                            <label htmlFor="chat-enabled" className="text-sm font-medium">
-                                Chat Enabled
-                            </label>
-                            <Switch
-                                id="chat-enabled"
-                                checked={session?.chat_enabled ?? false}
-                                onCheckedChange={(checked) => {
-                                    toggleChat(checked).catch((error) => {
-                                        console.error('Failed to toggle chat:', error);
-                                    });
-                                }}
+                    {/* Video Player */}
+                    <div className="flex-1">
+                        {sessionState === 'live' ? (
+                            <DualVideoPlayer
+                                screenUrl={session.screenUrl}
+                                faceUrl={session.faceUrl}
+                                scheduledStart={session.scheduledStart.toISOString()}
+                                isLive={true}
+                                liveOffset={liveOffset}
                             />
-                        </div>
-
-                        {/* Admin message */}
-                        <div className="space-y-2">
-                            <label htmlFor="admin-message" className="text-sm font-medium">
-                                Admin Message
-                            </label>
-                            <Textarea
-                                id="admin-message"
-                                placeholder="Type an admin message to broadcast..."
-                                value={adminMessage}
-                                onChange={(e) => setAdminMessage(e.target.value)}
-                                rows={3}
-                            />
-                            <Button
-                                onClick={() => {
-                                    if (!adminMessage.trim()) return;
-
-                                    sendMessage(adminMessage, 'admin')
-                                        .then(() => {
-                                            setAdminMessage('');
-                                        })
-                                        .catch((error) => {
-                                            console.error('Failed to send admin message:', error);
-                                        });
-                                }}
-                                disabled={!adminMessage.trim()}
-                            >
-                                Send Admin Message
-                            </Button>
-                        </div>
-
-                        {/* End session */}
-                        <div className="space-y-2 pt-4 border-t">
-                            <Button
-                                variant="destructive"
-                                className="w-full"
-                                onClick={async () => {
-                                    if (!sessionId) return;
-
-                                    try {
-                                        // Update session to not live
-                                        const { error: updateError } = await supabase
-                                            .from('sessions')
-                                            .update({ is_live: false })
-                                            .eq('id', sessionId);
-
-                                        if (updateError) throw updateError;
-
-                                        // Generate analytics report
-                                        const { error: rpcError } = await supabase.rpc(
-                                            'compute_session_analytics',
-                                            { p_session_id: sessionId }
-                                        );
-
-                                        if (rpcError) throw rpcError;
-
-                                        // Log session end event
-                                        logEvent('session_ended', {
-                                            sessionId,
-                                            timestamp: new Date().toISOString(),
-                                        });
-
-                                        // Reload analytics
-                                        await loadAnalytics();
-                                    } catch (error) {
-                                        console.error('Failed to end session:', error);
-                                    }
-                                }}
-                            >
-                                End Session & Generate Report
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                {/* Message moderation section */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Recent Messages</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        {messages.length === 0 ? (
-                            <p className="text-sm text-muted-foreground text-center py-4">
-                                No messages yet
-                            </p>
                         ) : (
-                            <div className="space-y-3">
-                                {messages
-                                    .slice(-10)
-                                    .reverse()
-                                    .map((message) => (
-                                        <div
-                                            key={message.id}
-                                            className="flex items-start justify-between gap-4 p-3 border rounded-lg"
-                                        >
-                                            <div className="flex-1 space-y-1 min-w-0">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-sm font-medium">
-                                                        {message.user_name}
-                                                    </span>
-                                                    {message.is_pinned && (
-                                                        <Badge variant="secondary" className="text-xs">
-                                                            Pinned
-                                                        </Badge>
-                                                    )}
-                                                </div>
-                                                <p className="text-sm text-muted-foreground break-words">
-                                                    {message.content}
-                                                </p>
-                                            </div>
-                                            <div className="flex gap-2 flex-shrink-0">
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => {
-                                                        pinMessage(message.id, !message.is_pinned).catch(
-                                                            (error) => {
-                                                                console.error(
-                                                                    'Failed to pin/unpin message:',
-                                                                    error
-                                                                );
-                                                            }
-                                                        );
-                                                    }}
-                                                >
-                                                    {message.is_pinned ? 'Unpin' : 'Pin'}
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    variant="destructive"
-                                                    onClick={() => {
-                                                        deleteMessage(message.id).catch((error) => {
-                                                            console.error(
-                                                                'Failed to delete message:',
-                                                                error
-                                                            );
-                                                        });
-                                                    }}
-                                                >
-                                                    Delete
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    ))}
+                            <div className="flex items-center justify-center h-full bg-zinc-900">
+                                <div className="text-center space-y-4">
+                                    <h2 className="text-xl font-semibold text-white">
+                                        {sessionState === 'scheduled' && 'Session Not Started'}
+                                        {sessionState === 'countdown' && 'Starting Soon...'}
+                                        {sessionState === 'starting' && 'Starting...'}
+                                        {sessionState === 'ended' && 'Session Ended'}
+                                    </h2>
+                                    <p className="text-zinc-400">
+                                        {durationDisplay}
+                                    </p>
+                                </div>
                             </div>
                         )}
-                    </CardContent>
-                </Card>
+                    </div>
+                </div>
 
-                {/* Session Analytics (conditional) */}
-                {analytics && (
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Session Analytics</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <dl className="space-y-3">
-                                <div className="flex justify-between">
-                                    <dt className="text-sm font-medium text-muted-foreground">
-                                        Total Viewers
-                                    </dt>
-                                    <dd className="text-sm font-semibold">
-                                        {analytics.total_viewers}
-                                    </dd>
+                {/* Right: Stats & Info */}
+                <div className="w-96 border-l border-zinc-800 bg-zinc-900">
+                    <div className="p-6 space-y-6">
+                        {/* Session Info */}
+                        <Card className="bg-zinc-800 border-zinc-700">
+                            <CardHeader>
+                                <CardTitle className="text-white text-sm">
+                                    Session Information
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-zinc-400 text-sm">Topic</span>
+                                    <Badge variant="secondary">{session.topic}</Badge>
                                 </div>
-                                <div className="flex justify-between">
-                                    <dt className="text-sm font-medium text-muted-foreground">
-                                        Peak Viewers
-                                    </dt>
-                                    <dd className="text-sm font-semibold">
-                                        {analytics.peak_viewers}
-                                    </dd>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-zinc-400 text-sm">Batch ID</span>
+                                    <code className="text-xs text-zinc-300 bg-zinc-700 px-2 py-1 rounded">
+                                        {session.id}
+                                    </code>
                                 </div>
-                                <div className="flex justify-between">
-                                    <dt className="text-sm font-medium text-muted-foreground">
-                                        Total Messages
-                                    </dt>
-                                    <dd className="text-sm font-semibold">
-                                        {analytics.total_messages}
-                                    </dd>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-zinc-400 text-sm">Status</span>
+                                    <Badge variant={sessionState === 'live' ? 'destructive' : 'outline'}>
+                                        {sessionState.toUpperCase()}
+                                    </Badge>
                                 </div>
-                                <div className="flex justify-between">
-                                    <dt className="text-sm font-medium text-muted-foreground">
-                                        Unique Chatters
-                                    </dt>
-                                    <dd className="text-sm font-semibold">
-                                        {analytics.unique_chatters}
-                                    </dd>
+                            </CardContent>
+                        </Card>
+
+                        {/* Live Stats */}
+                        <Card className="bg-zinc-800 border-zinc-700">
+                            <CardHeader>
+                                <CardTitle className="text-white text-sm">
+                                    Live Statistics
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="flex items-center gap-3">
+                                    <Eye className="h-5 w-5 text-zinc-400" />
+                                    <div>
+                                        <p className="text-2xl font-bold text-white">-</p>
+                                        <p className="text-xs text-zinc-500">Viewers</p>
+                                    </div>
                                 </div>
-                            </dl>
+                                <div className="flex items-center gap-3">
+                                    <MessageSquare className="h-5 w-5 text-zinc-400" />
+                                    <div>
+                                        <p className="text-2xl font-bold text-white">-</p>
+                                        <p className="text-xs text-zinc-500">Messages</p>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
 
-                            <Button
-                                variant="outline"
-                                className="w-full"
-                                onClick={() => {
-                                    if (!analytics.chat_log) return;
-
-                                    // Create blob from chat log
-                                    const blob = new Blob(
-                                        [JSON.stringify(analytics.chat_log, null, 2)],
-                                        { type: 'application/json' }
-                                    );
-
-                                    // Create download link
-                                    const url = URL.createObjectURL(blob);
-                                    const link = document.createElement('a');
-                                    link.href = url;
-                                    link.download = `session-${sessionId}-chat.json`;
-
-                                    // Trigger download
-                                    document.body.appendChild(link);
-                                    link.click();
-
-                                    // Cleanup
-                                    document.body.removeChild(link);
-                                    URL.revokeObjectURL(url);
-                                }}
-                            >
-                                Download Chat Log (JSON)
-                            </Button>
-                        </CardContent>
-                    </Card>
-                )}
+                        {/* Video URLs */}
+                        <Card className="bg-zinc-800 border-zinc-700">
+                            <CardHeader>
+                                <CardTitle className="text-white text-sm">
+                                    Video Sources
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                                <div>
+                                    <p className="text-xs text-zinc-500 mb-1">Screen Share</p>
+                                    <code className="text-xs text-zinc-300 break-all">
+                                        {session.screenUrl || 'Not available'}
+                                    </code>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-zinc-500 mb-1">Face Cam</p>
+                                    <code className="text-xs text-zinc-300 break-all">
+                                        {session.faceUrl || 'Not available'}
+                                    </code>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+                </div>
             </div>
-        </div>
+        </>
     );
 }

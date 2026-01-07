@@ -2,80 +2,67 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import type { Profile } from '@/lib/database.types';
 import { supabase } from '@/lib/supabase';
+import {
+    getUser,
+    getStoredUser,
+    storeUser,
+    clearStoredUser,
+    type CodekaroUser
+} from '@/lib/codekaro';
 
 /**
  * Authentication context type definition
- * Provides authentication state and methods throughout the application
+ * Supports both Codekaro email-only auth and Supabase password auth
  */
 interface AuthContextType {
-    /**
-     * The currently authenticated Supabase user
-     * null if user is not authenticated
-     */
+    /** Supabase user (for password-based auth) */
     user: User | null;
 
-    /**
-     * The user's profile data from the profiles table
-     * null if user is not authenticated or profile hasn't loaded
-     */
+    /** User's profile from Supabase profiles table */
     profile: Profile | null;
 
-    /**
-     * The current Supabase auth session
-     * Contains access token, refresh token, and session metadata
-     */
+    /** Supabase auth session */
     session: Session | null;
 
-    /**
-     * Loading state indicator
-     * true while checking authentication status or during auth operations
-     */
+    /** Codekaro user (for email-only auth) */
+    codekaroUser: CodekaroUser | null;
+
+    /** Loading state */
     loading: boolean;
 
+    /** Whether user is authenticated (either via Codekaro or Supabase) */
+    isAuthenticated: boolean;
+
+    /** Get display name from either auth system */
+    displayName: string | null;
+
+    /** Get email from either auth system */
+    email: string | null;
+
+    /** Get avatar URL from either auth system */
+    avatarUrl: string | null;
+
     /**
-     * Sign in with email and password
-     * @param email - User's email address
-     * @param password - User's password
-     * @returns Promise that resolves when sign in is complete
+     * Login with email only via Codekaro API
+     * This is the primary auth method for the streaming platform
      */
+    loginWithEmail: (email: string) => Promise<boolean>;
+
+    /** Sign in with email and password (Supabase fallback) */
     signIn: (email: string, password: string) => Promise<void>;
 
-    /**
-     * Sign up a new user with email, password, and full name
-     * @param email - User's email address
-     * @param password - User's password
-     * @param fullName - User's full name
-     * @returns Promise that resolves when sign up is complete
-     */
+    /** Sign up with email and password (Supabase fallback) */
     signUp: (email: string, password: string, fullName: string) => Promise<void>;
 
-    /**
-     * Sign out the current user
-     * Clears session and redirects to login
-     * @returns Promise that resolves when sign out is complete
-     */
+    /** Sign out from both auth systems */
     signOut: () => Promise<void>;
 
-    /**
-     * Verify user against external system
-     * Calls an Edge Function to validate the externalId with the external system
-     * @param externalId - The external system identifier to verify
-     * @returns Promise<boolean> - true if verification succeeds, false otherwise
-     */
+    /** Verify against external system */
     verifyEmail: (externalId: string) => Promise<boolean>;
 }
 
-/**
- * Auth context - provides authentication state and methods
- * Must be used within AuthProvider
- */
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-/**
- * Hook to access authentication context
- * @throws Error if used outside of AuthProvider
- * @returns Authentication context value
- */
 export function useAuth(): AuthContextType {
     const context = useContext(AuthContext);
     if (context === undefined) {
@@ -84,18 +71,24 @@ export function useAuth(): AuthContextType {
     return context;
 }
 
-/**
- * Authentication provider component
- * Wraps the application to provide authentication context
- */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-    // State management
+    // Supabase auth state
     const [user, setUser] = useState<User | null>(null);
     const [profile, setProfile] = useState<Profile | null>(null);
     const [session, setSession] = useState<Session | null>(null);
+
+    // Codekaro auth state
+    const [codekaroUser, setCodekaroUser] = useState<CodekaroUser | null>(null);
+
     const [loading, setLoading] = useState<boolean>(true);
 
-    // Helper function to fetch user profile from database
+    // Computed auth status
+    const isAuthenticated = !!(user || codekaroUser);
+    const displayName = codekaroUser?.name || profile?.full_name || user?.email || null;
+    const email = codekaroUser?.email || profile?.email || user?.email || null;
+    const avatarUrl = codekaroUser?.avatar || profile?.avatar_url || null;
+
+    // Fetch Supabase profile
     const fetchProfile = async (userId: string) => {
         const { data, error } = await supabase
             .from('profiles')
@@ -113,11 +106,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-    // Initialize auth session on mount
+    // Initialize auth on mount
     useEffect(() => {
         const initializeAuth = async () => {
-            const { data: { session: currentSession } } = await supabase.auth.getSession();
+            // Check for stored Codekaro user first
+            const storedUser = getStoredUser();
+            if (storedUser) {
+                setCodekaroUser(storedUser);
+            }
 
+            // Also check Supabase session
+            const { data: { session: currentSession } } = await supabase.auth.getSession();
             setSession(currentSession);
             setUser(currentSession?.user ?? null);
 
@@ -130,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         initializeAuth();
 
-        // Subscribe to auth state changes
+        // Subscribe to Supabase auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (_event: string, currentSession: Session | null) => {
                 setSession(currentSession);
@@ -144,66 +143,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
         );
 
-        // Cleanup: unsubscribe from auth state changes
         return () => {
             subscription.unsubscribe();
         };
     }, []);
 
-    // Authentication methods
-    const signIn = async (email: string, password: string): Promise<void> => {
+    /**
+     * Login with email only via Codekaro API
+     * Primary auth method for the streaming platform
+     */
+    const loginWithEmail = async (emailInput: string): Promise<boolean> => {
+        try {
+            const codekaroUserData = await getUser(emailInput);
+
+            if (!codekaroUserData) {
+                throw new Error('User not found. Please check your email address.');
+            }
+
+            // Store user in localStorage
+            storeUser(codekaroUserData);
+            setCodekaroUser(codekaroUserData);
+
+            return true;
+        } catch (error) {
+            console.error('Codekaro login failed:', error);
+            throw error;
+        }
+    };
+
+    // Supabase password auth (fallback)
+    const signIn = async (emailInput: string, password: string): Promise<void> => {
         const { error } = await supabase.auth.signInWithPassword({
-            email,
+            email: emailInput,
             password,
         });
-
         if (error) throw error;
     };
 
-    const signUp = async (email: string, password: string, fullName: string): Promise<void> => {
+    const signUp = async (emailInput: string, password: string, fullName: string): Promise<void> => {
         const { error } = await supabase.auth.signUp({
-            email,
+            email: emailInput,
             password,
             options: {
-                data: {
-                    full_name: fullName,
-                },
+                data: { full_name: fullName },
             },
         });
-
         if (error) throw error;
     };
 
+    // Sign out from both auth systems
     const signOut = async (): Promise<void> => {
-        const { error } = await supabase.auth.signOut();
+        // Clear Codekaro user
+        clearStoredUser();
+        setCodekaroUser(null);
 
-        if (error) throw error;
+        // Sign out from Supabase if logged in
+        if (session) {
+            const { error } = await supabase.auth.signOut();
+            if (error) throw error;
+        }
     };
 
-    /**
-     * Verify user against external system
-     * This will call an Edge Function that validates the externalId
-     * against the external authentication system (e.g., LMS, SSO provider)
-     * The Edge Function will update the user's profile with is_verified=true
-     * if verification succeeds
-     */
-    const verifyEmail = async (externalId: string): Promise<boolean> => {
-        // TODO: Call Edge Function when ready
-        // Example: const { data, error } = await supabase.functions.invoke('verify-external-id', {
-        //   body: { externalId }
-        // });
-        // if (error) throw error;
-        // return data?.verified ?? false;
-
+    const verifyEmail = async (_externalId: string): Promise<boolean> => {
+        // TODO: Implement when Edge Function is ready
         return false;
     };
 
-    // Context value
     const value: AuthContextType = {
         user,
         profile,
         session,
+        codekaroUser,
         loading,
+        isAuthenticated,
+        displayName,
+        email,
+        avatarUrl,
+        loginWithEmail,
         signIn,
         signUp,
         signOut,
@@ -212,3 +228,4 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
+

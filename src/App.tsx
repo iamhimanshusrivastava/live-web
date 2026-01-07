@@ -2,10 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider } from '@/contexts/AuthContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
-import VerifiedRoute from '@/components/VerifiedRoute';
 import LoginPage from '@/pages/LoginPage';
-import SignUpPage from '@/pages/SignUpPage';
-import VerifyEmailPage from '@/pages/VerifyEmailPage';
 import SessionsListPage from '@/pages/SessionsListPage';
 import SessionPage from '@/pages/SessionPage';
 import AdminDashboard from '@/pages/AdminDashboard';
@@ -13,6 +10,7 @@ import AdminDashboard from '@/pages/AdminDashboard';
 /**
  * Main application component
  * Sets up routing and authentication context
+ * Uses email-only authentication via Codekaro API
  */
 export function App() {
     return (
@@ -21,26 +19,13 @@ export function App() {
                 <Routes>
                     {/* Public routes */}
                     <Route path="/login" element={<LoginPage />} />
-                    <Route path="/signup" element={<SignUpPage />} />
 
-                    {/* Protected routes (require authentication) */}
-                    <Route
-                        path="/verify-email"
-                        element={
-                            <ProtectedRoute>
-                                <VerifyEmailPage />
-                            </ProtectedRoute>
-                        }
-                    />
-
-                    {/* Protected + Verified routes */}
+                    {/* Protected routes (require Codekaro email auth) */}
                     <Route
                         path="/sessions"
                         element={
                             <ProtectedRoute>
-                                <VerifiedRoute>
-                                    <SessionsListPage />
-                                </VerifiedRoute>
+                                <SessionsListPage />
                             </ProtectedRoute>
                         }
                     />
@@ -48,9 +33,7 @@ export function App() {
                         path="/session/:sessionId"
                         element={
                             <ProtectedRoute>
-                                <VerifiedRoute>
-                                    <SessionPage />
-                                </VerifiedRoute>
+                                <SessionPage />
                             </ProtectedRoute>
                         }
                     />
@@ -58,15 +41,16 @@ export function App() {
                         path="/admin/:sessionId"
                         element={
                             <ProtectedRoute>
-                                <VerifiedRoute>
-                                    <AdminDashboard />
-                                </VerifiedRoute>
+                                <AdminDashboard />
                             </ProtectedRoute>
                         }
                     />
 
                     {/* Root redirect */}
                     <Route path="/" element={<Navigate to="/sessions" replace />} />
+
+                    {/* Catch-all redirect */}
+                    <Route path="*" element={<Navigate to="/sessions" replace />} />
                 </Routes>
                 <Toaster />
             </AuthProvider>

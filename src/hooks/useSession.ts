@@ -19,8 +19,21 @@ export function useSession(sessionId: string) {
     // Rate limiting for messages
     const lastMessageTime = useRef<number>(0);
 
+    // Check if sessionId is a valid UUID
+    const isValidUUID = (id: string) => {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        return uuidRegex.test(id);
+    };
+
     // Load session data from database
     const loadSession = async () => {
+        // Validate UUID format
+        if (!isValidUUID(sessionId)) {
+            console.error('Invalid session ID format:', sessionId);
+            setLoading(false);
+            return;
+        }
+
         const { data, error } = await supabase
             .from('sessions')
             .select('*')
@@ -29,6 +42,7 @@ export function useSession(sessionId: string) {
 
         if (error) {
             console.error('Error loading session:', error);
+            setLoading(false);
             return;
         }
 
@@ -41,6 +55,11 @@ export function useSession(sessionId: string) {
 
     // Load messages for this session
     const loadMessages = async (before?: number) => {
+        // Validate UUID format
+        if (!isValidUUID(sessionId)) {
+            return;
+        }
+
         let query = supabase
             .from('messages')
             .select('*')
@@ -288,11 +307,18 @@ export function useSession(sessionId: string) {
     };
 
     const joinSession = async () => {
+        // Validate UUID format
+        if (!isValidUUID(sessionId)) {
+            return;
+        }
+
         // Get current user
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
+        // Silently return if not authenticated (guests can view)
         if (userError || !user) {
-            throw new Error('User not authenticated');
+            console.log('Guest user - skipping join tracking');
+            return;
         }
 
         // Insert viewer session (ignore unique constraint violations)
@@ -303,16 +329,22 @@ export function useSession(sessionId: string) {
 
         // Ignore unique constraint violations (user already joined)
         if (error && !error.message.includes('duplicate key')) {
-            throw error;
+            console.error('Error joining session:', error);
         }
     };
 
     const leaveSession = async () => {
+        // Validate UUID format
+        if (!isValidUUID(sessionId)) {
+            return;
+        }
+
         // Get current user
         const { data: { user }, error: userError } = await supabase.auth.getUser();
 
+        // Silently return if not authenticated
         if (userError || !user) {
-            throw new Error('User not authenticated');
+            return;
         }
 
         // Call leave_session RPC function
@@ -321,7 +353,9 @@ export function useSession(sessionId: string) {
             p_user_id: user.id,
         });
 
-        if (error) throw error;
+        if (error) {
+            console.error('Error leaving session:', error);
+        }
     };
 
     // Load more messages (for pagination)
