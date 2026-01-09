@@ -120,6 +120,10 @@ export function useSessionState({
         } else if (videoDuration && offset >= videoDuration) {
             // Past video duration - ended
             setState('ended');
+        } else if (!videoDuration && offset >= 14400) {
+            // Fallback: If no duration provided, assume max 4 hours (14400s)
+            // This prevents showing stale streams indefinitely
+            setState('ended');
         } else {
             // Stream is live
             setState('live');

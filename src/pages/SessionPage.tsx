@@ -8,12 +8,14 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useBatchSession } from '@/hooks/useBatchSession';
 import { useSessionState, shouldShowCountdown, shouldShowStarting, shouldShowEnded } from '@/hooks/useSessionState';
+import { useViewerTracking } from '@/hooks/useViewerTracking';
 import { initServerTime } from '@/lib/serverTime';
 import DualVideoPlayer from '@/components/DualVideoPlayer';
 import CountdownScreen from '@/components/CountdownScreen';
 import StartingScreen from '@/components/StartingScreen';
 import SessionEndedScreen from '@/components/SessionEndedScreen';
 import EmailVerificationModal from '@/components/EmailVerificationModal';
+import JoinSessionModal from '@/components/JoinSessionModal';
 
 // Temporary in-memory chat (will be replaced with Supabase realtime)
 interface ChatMessage {
@@ -44,17 +46,22 @@ export default function SessionPage() {
         verifyEmail,
     } = useBatchSession(sessionId || '');
 
+    // Track if user has clicked "Join Session" button (required for audio)
+    const [hasJoined, setHasJoined] = useState(false);
+
+    // Show join modal for verified users
+    const showJoinModal = isAuthenticated && !hasJoined && !loading && !error;
+
     // Session state machine
     const {
         state: sessionState,
         secondsToStart,
-        liveOffset,
         countdownDisplay,
         durationDisplay,
         isTimeSynced,
     } = useSessionState({
         scheduledStart: session?.scheduledStart?.toISOString() || null,
-        videoDuration: null,
+        videoDuration: session?.videoDuration || null,
         isActive: !!session?.isValid,
     });
 
@@ -62,6 +69,18 @@ export default function SessionPage() {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [messageInput, setMessageInput] = useState('');
     const scrollRef = useRef<HTMLDivElement>(null);
+
+    /**
+     * Handle join session button click
+     * This provides user interaction required for audio autoplay
+     */
+    const handleJoin = () => {
+        console.log('[SessionPage] User joined session');
+        setHasJoined(true);
+    };
+
+    // Track viewer count
+    const { viewerCount } = useViewerTracking(sessionId || null, hasJoined);
 
     /**
      * Initialize server time on mount
@@ -168,6 +187,14 @@ export default function SessionPage() {
     // LIVE STATE - Show video player + chat
     return (
         <>
+            {/* Join session modal for verified users */}
+            <JoinSessionModal
+                isOpen={showJoinModal}
+                sessionTitle={session.title}
+                userName={user?.name || user?.email || 'Guest'}
+                onJoin={handleJoin}
+            />
+
             {/* Email verification modal */}
             <EmailVerificationModal
                 isOpen={showEmailModal}
@@ -185,6 +212,15 @@ export default function SessionPage() {
                             <Badge variant="destructive" className="animate-pulse">
                                 🔴 LIVE
                             </Badge>
+                            <div className="flex items-center gap-1.5 text-zinc-400">
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                    <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                                    <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+                                </svg>
+                                <span className="text-sm font-medium">
+                                    {viewerCount}
+                                </span>
+                            </div>
                             <span className="text-white text-sm font-mono">
                                 {durationDisplay}
                             </span>
@@ -208,9 +244,8 @@ export default function SessionPage() {
                         <DualVideoPlayer
                             screenUrl={session.screenUrl}
                             faceUrl={session.faceUrl}
-                            scheduledStart={session.scheduledStart.toISOString()}
-                            isLive={true}
-                            liveOffset={liveOffset}
+                            scheduledStart={session.scheduledStart?.toISOString()}
+                            isLive={sessionState === 'live'}
                         />
                     </div>
                 </div>

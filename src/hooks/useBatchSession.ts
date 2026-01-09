@@ -11,6 +11,7 @@ export interface BatchSession {
     screenUrl: string | null;
     faceUrl: string | null;
     isValid: boolean;
+    videoDuration: number | null;  // Duration in seconds, null if not ended yet
 }
 
 export interface UseBatchSessionReturn {
@@ -59,6 +60,21 @@ export function useBatchSession(batchId: string): UseBatchSessionReturn {
                 return;
             }
 
+            // Check if stream has ended (stored in localStorage)
+            const endDataKey = `stream_end_${batch.time}`;
+            const storedEndData = localStorage.getItem(endDataKey);
+            let videoDuration: number | null = null;
+
+            if (storedEndData) {
+                try {
+                    const endInfo = JSON.parse(storedEndData);
+                    videoDuration = endInfo.duration;
+                    console.log(`[useBatchSession] Found stored end data: duration=${videoDuration}s`);
+                } catch (e) {
+                    console.error('Failed to parse stored end data:', e);
+                }
+            }
+
             // Transform Codekaro batch to session format
             const batchSession: BatchSession = {
                 id: batch.id,
@@ -69,6 +85,7 @@ export function useBatchSession(batchId: string): UseBatchSessionReturn {
                 screenUrl: batch.screenUrl || null,
                 faceUrl: batch.url || null,
                 isValid: !!(batch.screenUrl || batch.url),
+                videoDuration: videoDuration,
             };
 
             setSession(batchSession);

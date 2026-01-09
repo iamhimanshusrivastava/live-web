@@ -28,11 +28,10 @@ export default function AdminDashboard() {
     // Session state machine
     const {
         state: sessionState,
-        liveOffset,
         durationDisplay,
     } = useSessionState({
         scheduledStart: session?.scheduledStart?.toISOString() || null,
-        videoDuration: null,
+        videoDuration: session?.videoDuration || null,
         isActive: !!session?.isValid,
     });
 
@@ -97,9 +96,8 @@ export default function AdminDashboard() {
                             <DualVideoPlayer
                                 screenUrl={session.screenUrl}
                                 faceUrl={session.faceUrl}
-                                scheduledStart={session.scheduledStart.toISOString()}
-                                isLive={true}
-                                liveOffset={liveOffset}
+                                scheduledStart={session.scheduledStart?.toISOString()}
+                                isLive={sessionState === 'live'}
                             />
                         ) : (
                             <div className="flex items-center justify-center h-full bg-zinc-900">

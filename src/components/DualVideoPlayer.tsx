@@ -15,8 +15,6 @@ interface DualVideoPlayerProps {
     videoDuration?: number;
     /** Callback when stream ends */
     onStreamEnd?: () => void;
-    /** Current live offset display */
-    liveOffset?: number;
 }
 
 /**
@@ -31,15 +29,7 @@ interface DualVideoPlayerProps {
  * - Both videos synchronized to server time
  * - Videos start at live_offset, not beginning
  */
-export default function DualVideoPlayer({
-    screenUrl,
-    faceUrl,
-    scheduledStart,
-    isLive,
-    videoDuration,
-    onStreamEnd,
-    liveOffset,
-}: DualVideoPlayerProps) {
+export default function DualVideoPlayer({ screenUrl, faceUrl, scheduledStart, isLive, videoDuration, onStreamEnd }: DualVideoPlayerProps) {
     // Video refs
     const screenRef = useRef<HTMLVideoElement>(null);
     const faceRef = useRef<HTMLVideoElement>(null);
@@ -72,7 +62,14 @@ export default function DualVideoPlayer({
 
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
                 console.log(`[DualVideo] ${label} manifest loaded`);
-                videoElement.play().catch(console.error);
+
+                // Unmute video (join modal provides user interaction)
+                videoElement.muted = false;
+
+                // Play with audio
+                videoElement.play().catch(error => {
+                    console.error(`[DualVideo] ${label} play failed:`, error);
+                });
             });
 
             hls.on(Hls.Events.ERROR, (_, data) => {
@@ -130,21 +127,37 @@ export default function DualVideoPlayer({
     }, [faceUrl, initHls]);
 
     /**
-     * Enforce unmuted state on both videos (initial setup only)
-     * Set at mount and when videos change
+     * Detect when video ends and store the duration
+     * This allows late joiners to see "Session Ended" screen
      */
     useEffect(() => {
-        const screenVideo = screenRef.current;
-        const faceVideo = faceRef.current;
+        const video = screenRef.current;
+        if (!video || !scheduledStart) return;
 
-        if (screenVideo) {
-            screenVideo.muted = false;
-        }
+        const handleVideoEnded = () => {
+            // Calculate actual duration when video ends
+            const duration = video.currentTime;
+            console.log(`[DualVideo] Video ended at ${duration}s`);
 
-        if (faceVideo) {
-            faceVideo.muted = false;
-        }
-    }, [screenUrl, faceUrl]);
+            // Store end time in localStorage for future viewers
+            const endData = {
+                batchId: scheduledStart, // Use scheduled start as unique ID
+                endTime: new Date().toISOString(),
+                duration: duration,
+            };
+            localStorage.setItem(`stream_end_${scheduledStart}`, JSON.stringify(endData));
+
+            // Trigger onStreamEnd callback
+            onStreamEnd?.();
+        };
+
+        video.addEventListener('ended', handleVideoEnded);
+
+        return () => {
+            video.removeEventListener('ended', handleVideoEnded);
+        };
+    }, [scheduledStart, onStreamEnd]);
+
 
     /**
      * Toggle PiP position
@@ -243,13 +256,6 @@ export default function DualVideoPlayer({
                 >
                     Show Face Cam
                 </button>
-            )}
-
-            {/* Live offset indicator (debug) */}
-            {liveOffset !== undefined && (
-                <div className="absolute top-2 left-2 px-2 py-1 bg-black/50 rounded text-xs text-white/70 font-mono">
-                    Offset: {liveOffset.toFixed(1)}s
-                </div>
             )}
         </div>
     );
